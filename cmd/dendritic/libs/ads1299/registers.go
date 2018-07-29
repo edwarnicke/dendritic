@@ -14,12 +14,6 @@
 
 package ads1299
 
-import (
-	"github.com/edwarnicke/dendritic/cmd/dendritic/libs/spicmds"
-	"github.com/kubernetes/kubernetes/pkg/kubelet/kubeletconfig/util/log"
-	"periph.io/x/periph/conn/spi"
-)
-
 type Register byte
 
 const (
@@ -48,29 +42,3 @@ const (
 	MISC2      Register = 0x16
 	CONFIG4    Register = 0x17
 )
-
-func (r *Register) Read(c spi.Conn) (byte, error) {
-	rreg := byte(spicmds.RREG) | byte(*r)
-	write := []byte{rreg, 0x0}
-	read := make([]byte, len(write))
-	log.Infof("reading register %s (% x) on spi", r, rreg)
-	if err := c.Tx(write, read); err != nil {
-		log.Errorf("c.Tx(write, read) - returned err: %v", err)
-		return 0x0, err
-	}
-	log.Infof("%s: % x", r, read)
-	return read[0], nil
-}
-
-func (r *Register) Write(c spi.Conn, value byte) error {
-	rreg := byte(spicmds.WREG) | byte(*r)
-	write := []byte{rreg, 0x0, value}
-	read := make([]byte, len(write))
-	log.Infof("writing % x to register %s (% x) on spi", value, r, rreg)
-	if err := c.Tx(write, read); err != nil {
-		log.Errorf("c.Tx(write, read) - returned err: %v", err)
-		return err
-	}
-	log.Infof("%s: % x", r, read)
-	return nil
-}

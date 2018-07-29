@@ -14,11 +14,6 @@
 
 package ads1299
 
-import (
-	"github.com/kubernetes/kubernetes/pkg/kubelet/kubeletconfig/util/log"
-	"periph.io/x/periph/conn/spi"
-)
-
 type SpiCmd byte
 
 const (
@@ -32,13 +27,3 @@ const (
 	RREG      SpiCmd = 0x20
 	WREG      SpiCmd = 0x40
 )
-
-func (s *SpiCmd) Write(c spi.Conn) {
-	write := []byte{byte(*s), 0x00}
-	read := make([]byte, len(write))
-	log.Infof("transmitting %s (% x) on spi", s, write)
-	if err := c.Tx(write, read); err != nil {
-		log.Errorf("c.Tx(write, read) - returned err: %v", err)
-	}
-	log.Infof("%s: % x", s, read)
-}

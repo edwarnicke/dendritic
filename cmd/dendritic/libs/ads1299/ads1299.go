@@ -54,10 +54,10 @@ type ads1299 struct {
 func (a *ads1299) Init() error {
 	state, err := host.Init()
 	if err != nil {
-		logrus.Error("host.Init() resulted in err: %v", err)
+		logrus.Errorf("host.Init() resulted in err: %v", err)
 		return err
 	}
-	logrus.Info("host.Init() resulted in state: %v", state)
+	logrus.Infof("host.Init() resulted in Loaded drivers: %v", state.Loaded)
 
 	a.PWDN = gpioreg.ByName(PWDN)
 	err = a.PWDN.Out(gpio.Low)
