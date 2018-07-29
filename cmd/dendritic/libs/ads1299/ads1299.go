@@ -16,6 +16,7 @@ package ads1299
 
 import (
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/kubernetes/kubernetes/pkg/kubelet/kubeletconfig/util/log"
@@ -59,7 +60,10 @@ func (a *ads1299) Init() error {
 	}
 	logrus.Infof("host.Init() resulted in Loaded drivers: %v", state.Loaded)
 
+	listSPIPins()
+
 	a.PWDN = gpioreg.ByName(PWDN)
+	logrus.Infof("a.PWDN - %+v", a.PWDN)
 	err = a.PWDN.Out(gpio.Low)
 	if err != nil {
 		logrus.Errorf("ad1299.PWDN.Out(gpio.Low) - returned err: %v", err)
@@ -68,6 +72,7 @@ func (a *ads1299) Init() error {
 	logrus.Info("ad1299.PWDN.Out(gpio.Low)")
 
 	a.RESET = gpioreg.ByName(RESET)
+	logrus.Infof("a.RESET - %+v", a.RESET)
 	err = a.RESET.Out(gpio.Low)
 	if err != nil {
 		logrus.Errorf("ad1299.Reset.Out(gpio.Low) - returned err: %v", err)
@@ -76,6 +81,7 @@ func (a *ads1299) Init() error {
 	logrus.Info("ad1299.RESET.Out(gpio.Low)")
 
 	a.SPISTART = gpioreg.ByName(SPISTART)
+	logrus.Infof("a.SPISTART - %+v", a.SPISTART)
 	err = a.SPISTART.Out(gpio.Low)
 	if err != nil {
 		logrus.Errorf("ad1299.SPISTART.Out(gpio.Low) - returned err: %v", err)
@@ -98,8 +104,8 @@ func (a *ads1299) Init() error {
 		logrus.Errorf("ads1299.RESET.Out(gpio.High) - returned err: %v", err)
 	}
 
-	logrus.Infof("spireg.Open(\"0\")")
-	p, err := spireg.Open("0")
+	logrus.Infof("spireg.Open(\"\")")
+	p, err := spireg.Open("")
 	a.Port = p
 	if err != nil {
 		logrus.Errorf("spireg.Open(\"\") - returned err: %v", err)
@@ -110,6 +116,14 @@ func (a *ads1299) Init() error {
 	a.Conn = c
 	if err != nil {
 		logrus.Errorf("p.Connect(200*physic.KiloHertz, spi.Mode1, 8) - returned err", err)
+	}
+
+	if p, ok := p.(spi.Pins); ok {
+		fmt.Printf("  Port: %+v\n", p)
+		fmt.Printf("  CLK : %+v", p.CLK().Number())
+		fmt.Printf("  MOSI: %+v", p.MOSI().Number())
+		fmt.Printf("  MISO: %+v", p.MISO().Number())
+		fmt.Printf("  CS  : %+v\n", p.CS().Number())
 	}
 
 	ticker := time.NewTicker(500 * time.Millisecond)
@@ -125,26 +139,71 @@ func (a *ads1299) Init() error {
 		}
 	}()
 	time.Sleep(5 * time.Second)
-	if reg == 0x0 {
-		err = fmt.Errorf("failed to read non-zero ID register")
+	regs, err := a.DumpRegs()
+	if err != nil {
+		logrus.Errorf("error reading dumping registers %s - err: %s", ID, err)
 	}
+	logrus.Infof("registers: %v", regs)
 	return err
 }
 
-func (a *ads1299) ReadReg(r Register) (value byte, err error) {
+func (a *ads1299) ReadRegs(r Register, count byte) (value []byte, err error) {
+	if count > (0x17 - byte(r)) {
+		return nil, fmt.Errorf("count (%d) must be smaller than (23 (0x17) - register number 0x%x)", count, r)
+	}
 	rreg := byte(RREG) | byte(r)
-	write := []byte{rreg, 0x0}
+	write := make([]byte, count+2)
+	write[0] = rreg
+	write[1] = count
 	read := make([]byte, len(write))
-	logrus.Infof("reading register %s (% x) on spi", r, rreg)
+	logrus.Infof("reading %d register %s (% x) on spi", count+1, r, rreg)
 	if err := a.Conn.Tx(write, read); err != nil {
 		log.Errorf("c.Tx(write, read) - returned err: %v", err)
-		return 0x0, err
+		return nil, err
 	}
-	log.Infof("%s: % x", r, read)
-	return read[0], nil
+	log.Infof("%s: %v", r, read)
+	return read, nil
+}
+
+func (a *ads1299) ReadReg(r Register) (value byte, err error) {
+	regs, err := a.ReadRegs(r, 0)
+	return regs[0], err
+}
+
+func (a *ads1299) DumpRegs() ([]byte, error) {
+	rv, err := a.ReadRegs(ID, 0x17)
+	return rv, err
 }
 
 func (a *ads1299) Close() error {
 	a.Port.Close()
 	return nil
+}
+
+func listSPIPins() {
+	// Enumerate all SPI ports available and the corresponding pins.
+	fmt.Print("SPI ports available:\n")
+	for _, ref := range spireg.All() {
+		fmt.Printf("- %s\n", ref.Name)
+		if ref.Number != -1 {
+			fmt.Printf("  %d\n", ref.Number)
+		}
+		if len(ref.Aliases) != 0 {
+			fmt.Printf("  %s\n", strings.Join(ref.Aliases, " "))
+		}
+
+		p, err := ref.Open()
+		if err != nil {
+			fmt.Printf("  Failed to open: %v", err)
+		}
+		if p, ok := p.(spi.Pins); ok {
+			fmt.Printf("  CLK : %s", p.CLK())
+			fmt.Printf("  MOSI: %s", p.MOSI())
+			fmt.Printf("  MISO: %s", p.MISO())
+			fmt.Printf("  CS  : %s\n", p.CS())
+		}
+		if err := p.Close(); err != nil {
+			fmt.Printf("  Failed to close: %v", err)
+		}
+	}
 }
