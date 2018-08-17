@@ -8,6 +8,12 @@
   version = "v1.0"
 
 [[projects]]
+  name = "github.com/sirupsen/logrus"
+  packages = ["."]
+  revision = "3e01752db0189b9157070a0e1668a620f9a85da2"
+  version = "v1.0.6"
+
+[[projects]]
   name = "github.com/spf13/cobra"
   packages = ["."]
   revision = "ef82de70bb3f60c65fb8eebacbb2d122ef517385"
@@ -16,8 +22,23 @@
 [[projects]]
   name = "github.com/spf13/pflag"
   packages = ["."]
-  revision = "583c0c0531f06d5278b7d917446061adc344b5cd"
-  version = "v1.0.1"
+  revision = "9a97c102cda95a86cec2345a6f09f55a939babf5"
+  version = "v1.0.2"
+
+[[projects]]
+  branch = "master"
+  name = "golang.org/x/crypto"
+  packages = ["ssh/terminal"]
+  revision = "aabede6cba87e37f413b3e60ebfc214f8eeca1b0"
+
+[[projects]]
+  branch = "master"
+  name = "golang.org/x/sys"
+  packages = [
+    "unix",
+    "windows"
+  ]
+  revision = "1c9583448a9c3aa0f9a6a5241bf73c0bd8aafded"
 
 [[projects]]
   name = "periph.io/x/periph"
@@ -52,12 +73,12 @@
     "host/sysfs",
     "host/videocore"
   ]
-  revision = "000523f7fa26b78f012b93221c94434ac5b18e37"
-  version = "v3.0.0"
+  revision = "f34a1b4e75c5935f6269723ae45eacd0aa1d1a2a"
+  version = "v3.1.0"
 
 [solve-meta]
   analyzer-name = "dep"
   analyzer-version = 1
-  inputs-digest = "b255ccbf879ff2b00d583bb96f13e5092cda6d10f65a72a25846715978daeeb4"
+  inputs-digest = "e35799aec93d33838a76b77158deb35408ba2a81c44f972692c785c94352751f"
   solver-name = "gps-cdcl"
   solver-version = 1

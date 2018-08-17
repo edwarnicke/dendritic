@@ -19,7 +19,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/kubernetes/kubernetes/pkg/kubelet/kubeletconfig/util/log"
 	"github.com/sirupsen/logrus"
 	"periph.io/x/periph/conn/gpio"
 	"periph.io/x/periph/conn/gpio/gpioreg"
@@ -30,9 +29,11 @@ import (
 )
 
 const (
-	RESET    = "6"
-	PWDN     = "13"
-	SPISTART = "26"
+	RESET    = "GPIO6"
+	PWDN     = "GPIO13"
+	SPISTART = "GPIO26"
+	CE0      = "GPIO8"
+	CE1      = "GPIO7"
 )
 
 type ADS1299 interface {
@@ -48,6 +49,8 @@ type ads1299 struct {
 	PWDN     gpio.PinIO
 	RESET    gpio.PinIO
 	SPISTART gpio.PinIO
+	CE0      gpio.PinIO
+	CE1      gpio.PinIO
 	Port     spi.PortCloser
 	Conn     spi.Conn
 }
@@ -60,7 +63,23 @@ func (a *ads1299) Init() error {
 	}
 	logrus.Infof("host.Init() resulted in Loaded drivers: %v", state.Loaded)
 
-	listSPIPins()
+	a.CE0 = gpioreg.ByName(CE0)
+	logrus.Infof("a.CE0 - %+v", a.CE0)
+	err = a.CE0.Out(gpio.Low)
+	if err != nil {
+		logrus.Errorf("ad1299.CE0.Out(gpio.Low) - returned err: %v", err)
+		return err
+	}
+	logrus.Info("ad1299.CE0.Out(gpio.Low)")
+
+	a.CE1 = gpioreg.ByName(CE1)
+	logrus.Infof("a.CE1 - %+v", a.CE1)
+	err = a.CE1.Out(gpio.Low)
+	if err != nil {
+		logrus.Errorf("ad1299.CE1.Out(gpio.Low) - returned err: %v", err)
+		return err
+	}
+	logrus.Info("ad1299.CE1.Out(gpio.Low)")
 
 	a.PWDN = gpioreg.ByName(PWDN)
 	logrus.Infof("a.PWDN - %+v", a.PWDN)
@@ -91,6 +110,7 @@ func (a *ads1299) Init() error {
 
 	logrus.Infof("Sleeping 500 ms")
 	time.Sleep(500 * time.Millisecond)
+
 	logrus.Infof("setting ad1299.PWDN.Out(gpio.High)")
 	err = a.PWDN.Out(gpio.High)
 	if err != nil {
@@ -105,45 +125,49 @@ func (a *ads1299) Init() error {
 	}
 
 	logrus.Infof("spireg.Open(\"\")")
-	p, err := spireg.Open("")
+	p, err := spireg.Open("SPI0.0")
 	a.Port = p
 	if err != nil {
 		logrus.Errorf("spireg.Open(\"\") - returned err: %v", err)
 	}
 
 	logrus.Infof("p.Connect(200*physic.KiloHertz, spi.Mode1, 8)")
-	c, err := p.Connect(200*physic.KiloHertz, spi.Mode1, 8)
+	c, err := p.Connect(244*physic.KiloHertz, spi.Mode1|spi.NoCS, 8)
 	a.Conn = c
 	if err != nil {
-		logrus.Errorf("p.Connect(200*physic.KiloHertz, spi.Mode1, 8) - returned err", err)
+		logrus.Errorf("p.Connect(244*physic.KiloHertz, spi.Mode1, 8) - returned err", err)
 	}
 
-	if p, ok := p.(spi.Pins); ok {
-		fmt.Printf("  Port: %+v\n", p)
-		fmt.Printf("  CLK : %+v", p.CLK().Number())
-		fmt.Printf("  MOSI: %+v", p.MOSI().Number())
-		fmt.Printf("  MISO: %+v", p.MISO().Number())
-		fmt.Printf("  CS  : %+v\n", p.CS().Number())
+	reg, err := a.ReadReg(ID)
+	if err != nil {
+		logrus.Errorf("error reading register %s - err: %s", ID, err)
 	}
-
-	ticker := time.NewTicker(500 * time.Millisecond)
-	var reg byte
-	go func() {
-		for _ = range ticker.C {
-			reg, err = a.ReadReg(ID)
-			if err != nil {
-				logrus.Errorf("error reading register %s - err: %s", ID, err)
-				break
-			}
-			logrus.Infof("register %s - % x", ID, reg)
-		}
-	}()
-	time.Sleep(5 * time.Second)
+	logrus.Infof("register %s - % x", ID, reg)
+	time.Sleep(500 * time.Millisecond)
 	regs, err := a.DumpRegs()
 	if err != nil {
 		logrus.Errorf("error reading dumping registers %s - err: %s", ID, err)
 	}
 	logrus.Infof("registers: %v", regs)
+	time.Sleep(500 * time.Millisecond)
+	err = a.WriteReg(CH1SET, 0x60)
+	if err != nil {
+		logrus.Errorf("error writing registers %s - err: %s", CH1SET, err)
+	}
+	reg, err = a.ReadReg(ID)
+	if err != nil {
+		logrus.Errorf("error reading register %s - err: %s", ID, err)
+	}
+	logrus.Infof("register %s - % x", ID, reg)
+	time.Sleep(500 * time.Millisecond)
+
+	reg, err = a.ReadReg(CH1SET)
+	if err != nil {
+		logrus.Errorf("error reading register %s - err: %s", CH1SET, err)
+	}
+	logrus.Infof("register %s - % x", CH1SET, reg)
+	time.Sleep(500 * time.Millisecond)
+
 	return err
 }
 
@@ -152,16 +176,16 @@ func (a *ads1299) ReadRegs(r Register, count byte) (value []byte, err error) {
 		return nil, fmt.Errorf("count (%d) must be smaller than (23 (0x17) - register number 0x%x)", count, r)
 	}
 	rreg := byte(RREG) | byte(r)
-	write := make([]byte, count+2)
+	write := make([]byte, count+3)
 	write[0] = rreg
 	write[1] = count
 	read := make([]byte, len(write))
 	logrus.Infof("reading %d register %s (% x) on spi", count+1, r, rreg)
 	if err := a.Conn.Tx(write, read); err != nil {
-		log.Errorf("c.Tx(write, read) - returned err: %v", err)
+		logrus.Errorf("c.Tx(write, read) - returned err: %v", err)
 		return nil, err
 	}
-	log.Infof("%s: %v", r, read)
+	logrus.Infof("reading register %s: len(read): %d : %v", r, len(read), read)
 	return read, nil
 }
 
@@ -175,8 +199,22 @@ func (a *ads1299) DumpRegs() ([]byte, error) {
 	return rv, err
 }
 
+func (a *ads1299) WriteReg(r Register, value byte) error {
+	wreg := byte(WREG) | byte(r)
+	write := []byte{wreg, 0x0, value, 0x0}
+	read := make([]byte, len(write))
+	logrus.Infof("writing value 0x%x to register %s (0x%x)", value, r, byte(r))
+	if err := a.Conn.Tx(write, read); err != nil {
+		logrus.Errorf("c.Tx(write, read) - returned err: %v", err)
+		return err
+	}
+	return nil
+}
+
 func (a *ads1299) Close() error {
-	a.Port.Close()
+	if a.Port != nil {
+		a.Port.Close()
+	}
 	return nil
 }
 
