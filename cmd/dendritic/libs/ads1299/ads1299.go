@@ -148,12 +148,28 @@ func (a *ads1299) Init() error {
 	if err != nil {
 		logrus.Errorf("error reading dumping registers %s - err: %s", ID, err)
 	}
+
 	logrus.Infof("registers: %v", regs)
 	time.Sleep(500 * time.Millisecond)
 	err = a.WriteReg(CH1SET, 0x60)
 	if err != nil {
 		logrus.Errorf("error writing registers %s - err: %s", CH1SET, err)
 	}
+
+	logrus.Infof("registers: %v", regs)
+	time.Sleep(500 * time.Millisecond)
+	err = a.WriteReg(CH1SET, 0x60)
+	if err != nil {
+		logrus.Errorf("error writing registers %s - err: %s", CH1SET, err)
+	}
+
+	logrus.Infof("registers: %v", regs)
+	time.Sleep(500 * time.Millisecond)
+	err = a.WriteReg(CH1SET, 0x60)
+	if err != nil {
+		logrus.Errorf("error writing registers %s - err: %s", CH1SET, err)
+	}
+
 	reg, err = a.ReadReg(ID)
 	if err != nil {
 		logrus.Errorf("error reading register %s - err: %s", ID, err)
