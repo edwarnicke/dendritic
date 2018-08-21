@@ -2,6 +2,12 @@
 
 
 [[projects]]
+  name = "github.com/go-errors/errors"
+  packages = ["."]
+  revision = "a6af135bd4e28680facf08a3d206b454abc877a4"
+  version = "v1.0.1"
+
+[[projects]]
   name = "github.com/inconshreveable/mousetrap"
   packages = ["."]
   revision = "76626ae9c91c4f2a10f34cad8ce83ea42c93bb75"
@@ -79,6 +85,6 @@
 [solve-meta]
   analyzer-name = "dep"
   analyzer-version = 1
-  inputs-digest = "e35799aec93d33838a76b77158deb35408ba2a81c44f972692c785c94352751f"
+  inputs-digest = "b24db57478acc85575ed71453bb32798d4fa967cce97ffc1588a0e8c86ffcaff"
   solver-name = "gps-cdcl"
   solver-version = 1

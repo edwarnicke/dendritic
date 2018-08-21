@@ -30,6 +30,10 @@ var rootCmd = &cobra.Command{
 		ads := ads1299.New()
 		ads.Init()
 		defer ads.Close()
+		id, _ := ads.ReadReg(ads1299.ID)
+		fmt.Printf("ID: 0x%x\n", id)
+		regs, _ := ads.DumpRegs()
+		fmt.Printf("Regdump: 0x%x\n", regs)
 	},
 }
 

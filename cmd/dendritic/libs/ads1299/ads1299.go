@@ -15,12 +15,11 @@
 package ads1299
 
 import (
-	"fmt"
 	"io"
-	"strings"
+	"sync"
 	"time"
 
-	"github.com/sirupsen/logrus"
+	"github.com/go-errors/errors"
 	"periph.io/x/periph/conn/gpio"
 	"periph.io/x/periph/conn/gpio/gpioreg"
 	"periph.io/x/periph/conn/physic"
@@ -33,13 +32,17 @@ const (
 	RESET    = "GPIO6"
 	PWDN     = "GPIO13"
 	SPISTART = "GPIO26"
-	CE0      = "GPIO8"
-	CE1      = "GPIO7"
+	CLKSEL   = "GPIO17"
+	DRDY     = "GPIO24"
+	TCLK     = 500 * time.Nanosecond
+	TPOR     = 262144 * TCLK // 2^18 * t_clk
 )
 
 type ADS1299 interface {
 	Init() error
 	Close() error
+	ReadReg(r Register) (value byte, err error)
+	DumpRegs() ([]byte, error)
 }
 
 func New() ADS1299 {
@@ -52,250 +55,234 @@ type conn interface {
 }
 
 type ads1299 struct {
-	PWDN     gpio.PinIO
-	RESET    gpio.PinIO
-	SPISTART gpio.PinIO
-	CE0      gpio.PinIO
-	CE1      gpio.PinIO
+	PWDN     gpio.PinOut
+	RESET    gpio.PinOut
+	CLKSEL   gpio.PinOut
+	SPISTART gpio.PinOut
+	DRDY     gpio.PinIn
 	Port     spi.PortCloser
 	Conn     conn
+	sync.Mutex
+}
+
+func (a *ads1299) Reset() error {
+	a.Lock()
+	defer a.Unlock()
+	cmd := []byte{byte(SPI_RESET)}
+	if _, err := a.Conn.Write(cmd); err != nil {
+		return errors.Wrap(err, 0)
+	}
+	time.Sleep(18 * TCLK)
+	return nil
+}
+
+func (a *ads1299) Sdatac() error {
+	a.Lock()
+	defer a.Unlock()
+	cmd := []byte{byte(SDATAC)}
+	if _, err := a.Conn.Write(cmd); err != nil {
+		return errors.Wrap(err, 0)
+	}
+	time.Sleep(4 * TCLK)
+	return nil
+}
+
+func (a *ads1299) Rdatac() error {
+	a.Lock()
+	defer a.Unlock()
+	cmd := []byte{byte(RDATAC)}
+	if _, err := a.Conn.Write(cmd); err != nil {
+		return errors.Wrap(err, 0)
+	}
+	time.Sleep(4 * TCLK)
+	return nil
+}
+
+func (a *ads1299) Standy() error {
+	a.Lock()
+	defer a.Unlock()
+	cmd := []byte{byte(STANDBY)}
+	if _, err := a.Conn.Write(cmd); err != nil {
+		return errors.Wrap(err, 0)
+	}
+	time.Sleep(4 * TCLK)
+	return nil
+}
+
+func (a *ads1299) Wakeup() error {
+	a.Lock()
+	defer a.Unlock()
+	cmd := []byte{byte(WAKEUP)}
+	if _, err := a.Conn.Write(cmd); err != nil {
+		return errors.Wrap(err, 0)
+	}
+	time.Sleep(4 * TCLK)
+	return nil
+}
+
+func (a *ads1299) Start() error {
+	a.Lock()
+	defer a.Unlock()
+	cmd := []byte{byte(START)}
+	if _, err := a.Conn.Write(cmd); err != nil {
+		return errors.Wrap(err, 0)
+	}
+	time.Sleep(4 * TCLK)
+	return nil
 }
 
 func (a *ads1299) Init() error {
-	state, err := host.Init()
+	_, err := host.Init()
 	if err != nil {
-		logrus.Errorf("host.Init() resulted in err: %v", err)
+		return errors.Wrap(err, 0)
+	}
+	if err := a.setup(); err != nil {
 		return err
 	}
-	logrus.Infof("host.Init() resulted in Loaded drivers: %v", state.Loaded)
-
-	a.CE0 = gpioreg.ByName(CE0)
-	logrus.Infof("a.CE0 - %+v", a.CE0)
-	err = a.CE0.Out(gpio.Low)
-	if err != nil {
-		logrus.Errorf("ad1299.CE0.Out(gpio.Low) - returned err: %v", err)
+	if err := a.PowerUp(); err != nil {
 		return err
 	}
-	logrus.Info("ad1299.CE0.Out(gpio.Low)")
 
-	a.CE1 = gpioreg.ByName(CE1)
-	logrus.Infof("a.CE1 - %+v", a.CE1)
-	err = a.CE1.Out(gpio.Low)
-	if err != nil {
-		logrus.Errorf("ad1299.CE1.Out(gpio.Low) - returned err: %v", err)
+	if err := a.Reset(); err != nil {
 		return err
 	}
-	logrus.Info("ad1299.CE1.Out(gpio.Low)")
-
-	a.PWDN = gpioreg.ByName(PWDN)
-	logrus.Infof("a.PWDN - %+v", a.PWDN)
-	err = a.PWDN.Out(gpio.Low)
-	if err != nil {
-		logrus.Errorf("ad1299.PWDN.Out(gpio.Low) - returned err: %v", err)
+	if err := a.Sdatac(); err != nil {
 		return err
 	}
-	logrus.Info("ad1299.PWDN.Out(gpio.Low)")
-
-	a.RESET = gpioreg.ByName(RESET)
-	logrus.Infof("a.RESET - %+v", a.RESET)
-	err = a.RESET.Out(gpio.Low)
-	if err != nil {
-		logrus.Errorf("ad1299.Reset.Out(gpio.Low) - returned err: %v", err)
+	if err := a.WriteReg(CONFIG3, 0xE0); err != nil {
 		return err
 	}
-	logrus.Info("ad1299.RESET.Out(gpio.Low)")
-
-	a.SPISTART = gpioreg.ByName(SPISTART)
-	logrus.Infof("a.SPISTART - %+v", a.SPISTART)
-	err = a.SPISTART.Out(gpio.Low)
-	if err != nil {
-		logrus.Errorf("ad1299.SPISTART.Out(gpio.Low) - returned err: %v", err)
+	if err := a.WriteReg(CONFIG1, 0x96); err != nil {
 		return err
 	}
-	logrus.Info("ad1299.SPISTART.Out(gpio.Low)")
-
-	logrus.Infof("Sleeping 20 microseconds")
-	time.Sleep(20 * time.Microsecond)
-
-	logrus.Infof("setting ad1299.PWDN.Out(gpio.High)")
-	err = a.PWDN.Out(gpio.High)
-	if err != nil {
-		logrus.Errorf("ad1299.PWDN.Out(gpio.High) - returned err: %v", err)
+	if err := a.WriteReg(CONFIG2, 0xC0); err != nil {
+		return err
 	}
-	// logrus.Infof("Sleeping 500 ms")
-	// time.Sleep(500 * time.Millisecond)
-	logrus.Infof("setting ads1299.RESET.Out(gpio.High)")
-	a.RESET.Out(gpio.High)
-	if err != nil {
-		logrus.Errorf("ads1299.RESET.Out(gpio.High) - returned err: %v", err)
+	for chset := CH1SET; chset <= CH8SET; chset++ {
+		if err := a.WriteReg(chset, 0x01); err != nil {
+			return err
+		}
 	}
+	a.Start()
+	return nil
+}
 
-	logrus.Infof("spireg.Open(\"\")")
+func (a *ads1299) setup() error {
+	a.setupPins()
+	if err := a.setupSPI(); err != nil {
+		return errors.Wrap(err, 0)
+	}
+	return nil
+}
+
+func (a *ads1299) setupSPI() error {
 	p, err := spireg.Open("SPI0.0")
 	a.Port = p
 	if err != nil {
-		logrus.Errorf("spireg.Open(\"\") - returned err: %v", err)
+		return errors.Wrap(err, 0)
 	}
 
-	logrus.Infof("p.Connect(8*physic.MegaHertz, spi.Mode1, 8)")
 	c, err := p.Connect(8*physic.MegaHertz, spi.Mode1, 8)
+	if err != nil {
+		return errors.Errorf("p.Connect(8*physic.MegaHertz, spi.Mode1, 8) - returned err", err)
+	}
 	con, ok := c.(conn)
 	if !ok {
-		logrus.Errorf("error could not convert spi.Conn to io.ReadWriter")
+		return errors.Errorf("error could not convert spi.Conn to io.ReadWriter")
 	}
 	a.Conn = con
-	if err != nil {
-		logrus.Errorf("p.Connect(8*physic.MegaHertz, spi.Mode1, 8) - returned err", err)
-	}
-
-	reg, err := a.ReadReg(ID)
-	if err != nil {
-		logrus.Errorf("error reading register %s - err: %s", ID, err)
-	}
-	logrus.Infof("register %s - % x", ID, reg)
-	logrus.Infof("Sleeping 500 ms")
-	time.Sleep(500 * time.Millisecond)
-	regs, err := a.ReadRegs(CH1SET, 17)
-	if err != nil {
-		logrus.Errorf("error reading dumping registers %s - err: %s", ID, err)
-	}
-
-	logrus.Infof("registers: %v", regs)
-	logrus.Infof("Sleeping 500 ms")
-	time.Sleep(500 * time.Millisecond)
-	err = a.WriteReg(CH1SET, 0x60)
-	if err != nil {
-		logrus.Errorf("error writing registers %s - err: %s", CH1SET, err)
-	}
-
-	logrus.Infof("Sleeping 500 ms")
-	time.Sleep(500 * time.Millisecond)
-	err = a.WriteReg(CH1SET, 0x60)
-	if err != nil {
-		logrus.Errorf("error writing registers %s - err: %s", CH1SET, err)
-	}
-
-	logrus.Infof("Sleeping 500 ms")
-	time.Sleep(500 * time.Millisecond)
-	err = a.WriteReg(CH1SET, 0x60)
-	if err != nil {
-		logrus.Errorf("error writing registers %s - err: %s", CH1SET, err)
-	}
-
-	reg, err = a.ReadReg(ID)
-	if err != nil {
-		logrus.Errorf("error reading register %s - err: %s", ID, err)
-	}
-	logrus.Infof("register %s - 0x%x", ID, reg)
-	logrus.Infof("Sleeping 500 ms")
-	time.Sleep(500 * time.Millisecond)
-
-	reg, err = a.ReadReg(CH1SET)
-	if err != nil {
-		logrus.Errorf("error reading register %s - err: %s", CH1SET, err)
-	}
-	logrus.Infof("register %s - 0x%x", CH1SET, reg)
-	logrus.Infof("Sleeping 500 ms")
-	time.Sleep(500 * time.Millisecond)
-
-	rdump, err := a.DumpRegs()
-	if err != nil {
-		logrus.Errorf("error dumping registers err: %s", err)
-	}
-	for i, reg := range rdump {
-		logrus.Infof("%s: 0x%x", Register(i).String(), reg)
-	}
-
-	time.Sleep(500 * time.Millisecond)
-	regs, err = a.ReadRegs(CH1SET, 17)
-	if err != nil {
-		logrus.Errorf("error reading dumping registers %s - err: %s", ID, err)
-	}
-
-	logrus.Infof("registers: %v", regs)
-	logrus.Infof("Sleeping 500 ms")
-	time.Sleep(500 * time.Millisecond)
-
-	return err
+	return nil
 }
 
-func (a *ads1299) ReadRegs(r Register, count byte) (value []byte, err error) {
-	rcount := count - 1
-	if rcount > (0x17 - byte(r)) {
-		return nil, fmt.Errorf("rcount (%d) must be smaller than (23 (0x17) - register number 0x%x)", rcount, r)
+func (a *ads1299) setupPins() error {
+	a.PWDN = gpioreg.ByName(PWDN)
+	a.RESET = gpioreg.ByName(RESET)
+	a.CLKSEL = gpioreg.ByName(CLKSEL)
+	a.SPISTART = gpioreg.ByName(SPISTART)
+	a.DRDY = gpioreg.ByName(DRDY)
+	if err := a.PWDN.Out(gpio.Low); err != nil {
+		return err
 	}
-	rreg := byte(RREG) | byte(r)
-	write := make([]byte, 2)
-	write[0] = rreg
-	write[1] = count
-	logrus.Infof("about to send 0x%x (%d) on spi", write, write)
-	logrus.Infof("reading %d register %s (% x) on spi", count, r, rreg)
-	if _, err := a.Conn.Write(write); err != nil {
-		logrus.Errorf("c.Write(write) - returned err: %v", err)
-		return nil, err
+	if err := a.RESET.Out(gpio.Low); err != nil {
+		return err
 	}
-	read := make([]byte, count)
-	if _, err := a.Conn.Read(read); err != nil {
-		logrus.Errorf("c.Read(read) - returned err: %v", err)
-		return nil, err
+	if err := a.CLKSEL.Out(gpio.High); err != nil {
+		return err
 	}
-	logrus.Infof("reading register %s: len(read): %d : %v", r, len(read), read)
-	return read, nil
+	if err := a.SPISTART.Out(gpio.Low); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (a *ads1299) PowerUp() error {
+	a.Lock()
+	defer a.Unlock()
+	if err := a.PWDN.Out(gpio.High); err != nil {
+		return err
+	}
+	time.Sleep(2 * TPOR)
+	return nil
+}
+
+func (a *ads1299) PowerDown() error {
+	a.Lock()
+	defer a.Unlock()
+	if err := a.PWDN.Out(gpio.Low); err != nil {
+		return err
+	}
+	time.Sleep(2 * TPOR)
+	return nil
 }
 
 func (a *ads1299) ReadReg(r Register) (value byte, err error) {
-	regs, err := a.ReadRegs(r, 1)
-	return regs[0], err
+	if err := a.Sdatac(); err != nil {
+		return 0, err
+	}
+	rreg := byte(RREG) | byte(r)
+	write := []byte{rreg, 0x0}
+	read := []byte{0x0}
+	if _, err := a.Conn.Write(write); err != nil {
+		return 0, err
+	}
+	if _, err := a.Conn.Read(read); err != nil {
+		return 0, err
+	}
+	return read[0], nil
 }
 
 func (a *ads1299) DumpRegs() ([]byte, error) {
-	rv, err := a.ReadRegs(ID, 0x17)
-	return rv, err
+	regcount := 17
+	rv := make([]byte, regcount)
+	for reg := 0; reg < regcount; reg++ {
+		r, err := a.ReadReg(Register(reg))
+		if err != nil {
+			return rv, err
+		}
+		rv[reg] = r
+	}
+	return rv, nil
 }
 
 func (a *ads1299) WriteReg(r Register, value byte) error {
 	wreg := byte(WREG) | byte(r)
 	write := []byte{wreg, 0x0, value}
-	logrus.Infof("about to send %0x (%d) on spi", write, write)
-	logrus.Infof("writing value 0x%x to register %s (0x%x)", value, r, byte(r))
 	if _, err := a.Conn.Write(write); err != nil {
-		logrus.Errorf("c.Tx(write, read) - returned err: %v", err)
 		return err
 	}
 	return nil
 }
 
 func (a *ads1299) Close() error {
+	if a.Conn != nil {
+		if err := a.PowerDown(); err != nil {
+			return err
+		}
+	}
 	if a.Port != nil {
-		a.Port.Close()
+		if err := a.Port.Close(); err != nil {
+			return err
+		}
 	}
 	return nil
-}
-
-func listSPIPins() {
-	// Enumerate all SPI ports available and the corresponding pins.
-	fmt.Print("SPI ports available:\n")
-	for _, ref := range spireg.All() {
-		fmt.Printf("- %s\n", ref.Name)
-		if ref.Number != -1 {
-			fmt.Printf("  %d\n", ref.Number)
-		}
-		if len(ref.Aliases) != 0 {
-			fmt.Printf("  %s\n", strings.Join(ref.Aliases, " "))
-		}
-
-		p, err := ref.Open()
-		if err != nil {
-			fmt.Printf("  Failed to open: %v", err)
-		}
-		if p, ok := p.(spi.Pins); ok {
-			fmt.Printf("  CLK : %s", p.CLK())
-			fmt.Printf("  MOSI: %s", p.MOSI())
-			fmt.Printf("  MISO: %s", p.MISO())
-			fmt.Printf("  CS  : %s\n", p.CS())
-		}
-		if err := p.Close(); err != nil {
-			fmt.Printf("  Failed to close: %v", err)
-		}
-	}
 }
