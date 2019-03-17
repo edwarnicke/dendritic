@@ -28,7 +28,10 @@ var rootCmd = &cobra.Command{
 	Long:  `An EEG control CLI`,
 	Run: func(cmd *cobra.Command, args []string) {
 		ads := ads1299.New()
-		ads.Init()
+		if err := ads.Init(); err != nil {
+			fmt.Printf("Initialization error: %s\n ", err)
+			os.Exit(1)
+		}
 		defer ads.Close()
 		id, _ := ads.ReadReg(ads1299.ID)
 		fmt.Printf("ID: 0x%x\n", id)

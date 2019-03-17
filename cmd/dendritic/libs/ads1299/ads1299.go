@@ -163,12 +163,21 @@ func (a *ads1299) Init() error {
 			return err
 		}
 	}
-	a.Start()
+	if err := a.Start(); err != nil {
+		return err
+	}
+
+	// if err := a.Rdatac(); err != nil {
+	// 	return err
+	// }
+
 	return nil
 }
 
 func (a *ads1299) setup() error {
-	a.setupPins()
+	if err := a.setupPins(); err != nil {
+		return err
+	}
 	if err := a.setupSPI(); err != nil {
 		return errors.Wrap(err, 0)
 	}
@@ -184,7 +193,7 @@ func (a *ads1299) setupSPI() error {
 
 	c, err := p.Connect(8*physic.MegaHertz, spi.Mode1, 8)
 	if err != nil {
-		return errors.Errorf("p.Connect(8*physic.MegaHertz, spi.Mode1, 8) - returned err", err)
+		return errors.Errorf("p.Connect(8*physic.MegaHertz, spi.Mode1, 8) - returned err: %s", err)
 	}
 	con, ok := c.(conn)
 	if !ok {
@@ -206,12 +215,17 @@ func (a *ads1299) setupPins() error {
 	if err := a.RESET.Out(gpio.Low); err != nil {
 		return err
 	}
+	if err := a.DRDY.In(gpio.PullDown, gpio.FallingEdge); err != nil {
+		return err
+	}
 	if err := a.CLKSEL.Out(gpio.High); err != nil {
 		return err
 	}
 	if err := a.SPISTART.Out(gpio.Low); err != nil {
 		return err
 	}
+	// Wait for oscilator to wake up
+	time.Sleep(4 * TPOR)
 	return nil
 }
 
@@ -265,10 +279,13 @@ func (a *ads1299) DumpRegs() ([]byte, error) {
 }
 
 func (a *ads1299) WriteReg(r Register, value byte) error {
-	wreg := byte(WREG) | byte(r)
-	write := []byte{wreg, 0x0, value}
-	if _, err := a.Conn.Write(write); err != nil {
-		return err
+	for v, _ := a.ReadReg(r); v != value; v, _ = a.ReadReg(r) {
+		wreg := byte(WREG) | byte(r)
+		write := []byte{wreg, 0x0, value}
+		if _, err := a.Conn.Write(write); err != nil {
+			return err
+		}
+		time.Sleep(4 * TCLK)
 	}
 	return nil
 }
